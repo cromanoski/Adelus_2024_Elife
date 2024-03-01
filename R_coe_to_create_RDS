@@ -1,0 +1,647 @@
+# Below is the code used to generate the final RDS for this study
+
+# Load necessary libraries 
+library(hdf5r) 
+library(Signac)
+library(Seurat)
+library(EnsDb.Hsapiens.v86) 
+library(BSgenome.Hsapiens.UCSC.hg38) 
+library(ggplot2)
+library(data.table)
+library(dittoSeq) 
+library(DoubletFinder)
+library(dplyr)
+library(GenomeInfoDb)
+library(devtools)
+library(glmGamPoi)
+set.seed(1234)
+
+# Extract gene annotations from EnsDb, and change to UCSC style
+annotation <- GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86) 
+seqlevelsStyle(annotation) <- "UCSC"
+
+# Load the RNA multiome data 
+counts1 <- Read10X_h5("/directory/snt/outs/filtered_feature_bc_matrix.h5") 
+fragpath1 <- "/directory/snt/outs/atac_fragments.tsv.gz"
+nt = CreateSeuratObject(counts = counts1$`Gene Expression`, assay = "RNA")
+counts2 <- Read10X_h5("/directory/sil1b/outs/filtered_feature_bc_matrix.h5")
+fragpath2 <- "/directory/sil1b/outs/atac_fragments.tsv.gz"
+il1b <- CreateSeuratObject(counts = counts2$`Gene Expression`, assay = "RNA")
+counts3 <- Read10X_h5("/directory/CR74-75_1/outs/filtered_feature_bc_matrix.h5") 
+fragpath3 <- "/directory/outs/atac_fragments.tsv.gz"
+lane1 <- CreateSeuratObject(counts = counts3$`Gene Expression`, assay = "RNA")
+counts4 <- Read10X_h5("/directory/CR74-75_2/outs/filtered_feature_bc_matrix.h5")
+fragpath4 <- "/directory/CR74-75_2/outs/atac_fragments.tsv.gz"
+lane2 <- CreateSeuratObject(counts = counts4$`Gene Expression`, assay = "RNA")
+counts5 <- Read10X_h5("/directory/CR74-75_3/outs/filtered_feature_bc_matrix.h5")
+fragpath5 <- "/directory/CR74-75_3/outs/atac_fragments.tsv.gz"
+lane3 <- CreateSeuratObject(counts = counts5$`Gene Expression`, assay = "RNA")
+counts6 <- Read10X_h5("/directory/CR74-75_4/outs/filtered_feature_bc_matrix.h5")
+fragpath6 <- "/directory/CR74-75_4/outs/atac_fragments.tsv.gz"
+lane4 <- CreateSeuratObject(counts = counts6$`Gene Expression`, assay = "RNA")
+counts7 <- Read10X_h5("/directory/CR74-75_5/outs/filtered_feature_bc_matrix.h5")
+fragpath7 <- "/directory/CR74-75_5/outs/atac_fragments.tsv.gz"
+lane5 <- CreateSeuratObject(counts = counts7$`Gene Expression`, assay = "RNA")
+
+# Filter out low quality cells in RNA objects
+nt[["percent.mt"]] <- PercentageFeatureSet(nt, pattern = "^MT-")
+nt <- subset(x = nt, subset = nCount_RNA > 500 & percent.mt < 20) 
+il1b[["percent.mt"]] <- PercentageFeatureSet(il1b, pattern = "^MT-")
+il1b <- subset(x = il1b, subset = nCount_RNA > 500 & percent.mt < 20) 
+lane1[["percent.mt"]] <- PercentageFeatureSet(lane1, pattern = "^MT-")
+lane1 <- subset(x = lane1, subset = nCount_RNA > 500 & percent.mt < 20) 
+lane2[["percent.mt"]] <- PercentageFeatureSet(lane2, pattern = "^MT-")
+lane2 <- subset(x = lane2, subset = nCount_RNA > 500 & percent.mt < 20) 
+lane3[["percent.mt"]] <- PercentageFeatureSet(lane3, pattern = "^MT-")
+lane3 <- subset(x = lane3, subset = nCount_RNA > 500 & percent.mt < 20) 
+lane4[["percent.mt"]] <- PercentageFeatureSet(lane4, pattern = "^MT-")
+lane4 <- subset(x = lane4, subset = nCount_RNA > 500 & percent.mt < 20) 
+lane5[["percent.mt"]] <- PercentageFeatureSet(lane5, pattern = "^MT-")
+lane5 <- subset(x = lane5, subset = nCount_RNA > 500 & percent.mt < 20) 
+
+# Import demuxlet files and subset RNA objects for singlets 
+nt = importDemux(nt,demuxlet.best = "/directory/snt.demuxlet.concat.best")
+nt <- subset(nt, subset = demux.doublet.call == "SNG") 
+il1b = importDemux(il1b,demuxlet.best = "/directory/sil1b.demuxlet.concat.best")
+il1b <- subset(il1b, subset = demux.doublet.call == "SNG") 
+lane1 = importDemux(lane1,demuxlet.best = "/directory/CR74-75_1.demuxlet.concat.best")
+lane1 <- subset(lane1, subset = demux.doublet.call == "SNG") 
+lane2 = importDemux(lane2,demuxlet.best = "/directory/CR74-75_2.demuxlet.concat.best")
+lane2 <- subset(lane2, subset = demux.doublet.call == "SNG") 
+lane3 = importDemux(lane3,demuxlet.best = "/directory/CR74-75_3.demuxlet.concat.best")
+lane3 <- subset(lane3, subset = demux.doublet.call == "SNG") 
+lane4 = importDemux(lane4,demuxlet.best = "/directory/CR74-75_4.demuxlet.concat.best")
+lane4 <- subset(lane4, subset = demux.doublet.call == "SNG") 
+lane5 = importDemux(lane5,demuxlet.best = "/directory/CR74-75_5.demuxlet.concat.best")
+lane5 <- subset(lane5, subset = demux.doublet.call == "SNG") 
+
+# Save lane IDs before integrating RNA objects
+nt$condition = "nt" 
+il1b$condition = "il1b" 
+lane1$condition = "lane1"
+lane2$condition = "lane2"
+lane3$condition = "lane3"
+lane4$condition = "lane4"
+lane5$condition = "lane5"
+
+# Add lane IDs to barcodes to avoid duplicates during merging and integration 
+x = gsub("^", paste0(nt$condition, "_"), colnames(nt))
+nt = RenameCells(nt, new.names = x)
+x = gsub("^", paste0(il1b$condition, "_"), colnames(il1b))
+il1b = RenameCells(il1b, new.names = x)
+x = gsub("^", paste0(lane1$condition, "_"), colnames(lane1))
+lane1 = RenameCells(lane1, new.names = x)
+x = gsub("^", paste0(lane2$condition, "_"), colnames(lane2))
+lane2 = RenameCells(lane2, new.names = x)
+x = gsub("^", paste0(lane3$condition, "_"), colnames(lane3))
+lane3 = RenameCells(lane3, new.names = x)
+x = gsub("^", paste0(lane4$condition, "_"), colnames(lane4))
+lane4  = RenameCells(lane4, new.names = x)
+x = gsub("^", paste0(lane5$condition, "_"), colnames(lane5))
+lane5 = RenameCells(lane5, new.names = x)
+
+# Clean up sample IDs
+x = gsub("\\..*", "", nt$Sample)
+nt = AddMetaData(object = nt, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", il1b$Sample)
+il1b = AddMetaData(object = il1b, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", lane1$Sample)
+lane1 = AddMetaData(object = lane1, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", lane2$Sample)
+lane2 = AddMetaData(object = lane2, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", lane3$Sample)
+lane3 = AddMetaData(object = lane3, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", lane4$Sample)
+lane4 = AddMetaData(object = lane4, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", lane5$Sample)
+lane5 = AddMetaData(object = lane5, metadata = x, col.name = "Donor")
+
+# Add treatment based on lane and donor information for each cell
+nt$Treatment = "ctrl_6hr"
+il1b$Treatment = "il1b_6hr"
+lane1_V105_J98_U114 = subset(lane1, subset = Donor == "V105" 
+                             | Donor == "J98" 
+                             | Donor == "U114")
+cells_lane1_V105_J98_U114 = colnames(lane1_V105_J98_U114)
+lane1$Treatment <- ifelse(colnames(lane1) %in% cells_lane1_V105_J98_U114, "siSCR_7d", "ctrl_tx_7d")
+lane1$Donor = ifelse(lane1$Donor == "TELOS", "WT_Telo", lane1$Donor)
+lane2_V105_J98_U114 = subset(lane2, subset = Donor == "V105" 
+                             | Donor == "J98" 
+                             | Donor == "U114")
+lane2_J76_WT_Telos = subset(lane2, subset = Donor == "J76" 
+                            | Donor == "TELOS")
+cells_lane2_V105_J98_U114 = colnames(lane2_V105_J98_U114)
+cells_lane2_J76_WT_Telos = colnames(lane2_J76_WT_Telos)
+lane2$Treatment <- ifelse(colnames(lane2) %in% cells_lane2_V105_J98_U114, "siRNA_7d", 
+                          ifelse(colnames(lane2) %in% cells_lane2_J76_WT_Telos, "TGFb_7d", "TGFb_4d"))
+lane2$Donor = ifelse(lane2$Donor == "TELOS", "WT_Telo", lane2$Donor)
+lane3_J98 = subset(lane3, subset = Donor == "J98")
+lane3_U114_V105 = subset(lane3, subset = Donor == "U114" 
+                         | Donor == "V105")
+lane3_M103 = subset(lane3, subset = Donor == "M103")
+lane3_J76_WT_Telos = subset(lane3, subset = Donor == "J76" 
+                            | Donor == "TELOS")
+cells_lane3_J98 = colnames(lane3_J98)
+cells_lane3_U114_V105 = colnames(lane3_U114_V105)
+cells_lane3_M103 = colnames(lane3_M103)
+cells_lane3_J76_WT_Telos = colnames(lane3_J76_WT_Telos)
+lane3$Treatment <- ifelse(colnames(lane3) %in% cells_lane3_J98, "siSCR_4d", 
+                          ifelse(colnames(lane3) %in% cells_lane3_U114_V105, "ctrl_tx_7d",
+                                 ifelse(colnames(lane3) %in% cells_lane3_M103, "TGFb_7d", "il1b_7d")))
+lane3$Donor = ifelse(lane3$Donor == "TELOS", "WT_Telo", lane3$Donor)
+lane4_J98 = subset(lane4, subset = Donor == "J98")
+lane4_D120_NH3 = subset(lane4, subset = Donor == "D120" 
+                        | Donor == "TELOS")
+lane4_U114_V105 = subset(lane4, subset = Donor == "U114" 
+                         | Donor == "V105")
+cells_lane4_J98 = colnames(lane4_J98)
+cells_lane4_D120_NH3 = colnames(lane4_D120_NH3)
+cells_lane4_U114_V105 = colnames(lane4_U114_V105)
+lane4$Treatment <- ifelse(colnames(lane4) %in% cells_lane4_J98, "siRNA_4d", 
+                          ifelse(colnames(lane4) %in% cells_lane4_D120_NH3, "ctrl_tx_7d",
+                                 ifelse(colnames(lane4) %in% cells_lane4_U114_V105, "TGFb_7d", "il1b_4d")))
+lane4$Donor = ifelse(lane4$Donor == "TELOS", "NH3", lane4$Donor)
+lane5_D120_NH3 = subset(lane5, subset = Donor == "D120" 
+                        | Donor == "TELOS")
+cells_lane5_D120_NH3 = colnames(lane5_D120_NH3)
+lane5$Treatment <- ifelse(colnames(lane5) %in% cells_lane5_D120_NH3, "TGFb_7d", "il1b_7d")
+lane5$Donor = ifelse(lane5$Donor == "TELOS", "NH3", lane5$Donor)
+
+# Merge data 
+merged = merge(nt, y = c(il1b, lane1, lane2, lane3, lane4, lane5))
+
+# Load genes for regression 
+s.genes = cc.genes$s.genes
+g2m.genes = cc.genes$g2m.genes
+
+# Split RNA object by treatment
+list = SplitObject(merged, split.by = "Treatment") 
+
+# Free up memory prior to integration 
+rm(nt)
+rm(il1b)
+rm(lane1)
+rm(lane2)
+rm(lane3)
+rm(lane4)
+rm(lane5)
+
+# Generate cell cycle scores for each cell
+list = lapply(X = list, FUN = NormalizeData) 
+list = lapply(X = list, FUN = CellCycleScoring, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+
+# Regress out cell cycle scores
+list <- lapply(X = list, FUN = SCTransform, method = "glmGamPoi", vars.to.regress = c("S.Score", "G2M.Score"))
+
+# Integrate data 
+features <- SelectIntegrationFeatures(object.list = list, nfeatures = 10000)
+list <- PrepSCTIntegration(object.list = list, anchor.features = features)
+list <- lapply(X = list, FUN = RunPCA, features = features)
+integrated_rna.anchors <- FindIntegrationAnchors(object.list = list, normalization.method = "SCT", anchor.features = features, dims = 1:30, reduction = "rpca", k.anchor = 20)
+vitro_by_treatment_more_features_just_rna_cell_cycle_regressed.sct <- IntegrateData(anchorset = integrated_rna.anchors, normalization.method = "SCT", dims = 1:30) 
+
+# Run PCA and find clusters 
+integrated_rna <- vitro_by_treatment_more_features_just_rna_cell_cycle_regressed.sct
+integrated_rna <- RunPCA(integrated_rna, verbose = FALSE)
+integrated_rna <- RunUMAP(integrated_rna, reduction = "pca", dims = 1:30)
+integrated_rna <- FindNeighbors(integrated_rna, reduction = "pca", dims = 1:30)
+integrated_rna <- FindClusters(integrated_rna, resolution = 0.5)
+
+# Visualize 
+DimPlot(integrated_rna, reduction = "umap", label = TRUE, repel = TRUE, label.size = 3.5)
+DimPlot(integrated_rna, reduction = "umap", group.by = "Treatment", label = T, label.size = 3.5, repel = T)
+DimPlot(integrated_rna, reduction = "umap", group.by = "Treatment", split.by = "Donor")
+DimPlot(integrated_rna, reduction = "umap", group.by = "Donor", label = T, label.size = 3.5, repel = T)
+FeaturePlot(integrated_rna, features = c("ERG", "COL1A1"), reduction = "umap")
+sct.markers = FindAllMarkers(integrated_rna, assay = "integrated", only.pos = TRUE)
+
+# Explore cell markers 
+write.table(sct.markers, "/Users/directory/sct.markers.txt", sep = "\t", quote = FALSE, row.names = TRUE, col.names = NA)
+
+# Load libraries for ATAC integration 
+library(Signac)
+library(Seurat)
+library(EnsDb.Hsapiens.v86)
+library(BSgenome.Hsapiens.UCSC.hg38)
+library(ggplot2)
+library(data.table)
+library(dittoSeq)
+library(DoubletFinder)
+library(dplyr)
+library(GenomeInfoDb)
+library(DoubletFinder)
+library(dittoSeq)
+library(devtools)
+library(glmGamPoi)
+set.seed(1234)
+
+# Extract gene annotations from EnsDb, and change to UCSC style
+annotations = GetGRangesFromEnsDb(ensdb = EnsDb.Hsapiens.v86)
+seqlevelsStyle(annotations) = "UCSC"
+
+# Load count data and create seurat objects
+counts1 = Read10X_h5("/directory/snt/filtered_feature_bc_matrix.h5")
+fragpath1 = "/directory/snt/atac_fragments.tsv.gz"
+nt = CreateChromatinAssay(counts = counts1$`Peaks`, sep = c(":", "-"), genome = 'hg38', fragments = fragpath1)
+nt = CreateSeuratObject(counts = nt, assay = "ATAC") 
+Annotation(object = nt) <- annotations
+counts2 = Read10X_h5("/directory/sil1b/filtered_feature_bc_matrix.h5")
+fragpath2 = "/directory/sil1b/atac_fragments.tsv.gz"
+il1b = CreateChromatinAssay(counts = counts2$Peaks, sep = c(":", "-"), genome = 'hg38', fragments = fragpath2)
+il1b = CreateSeuratObject(counts = il1b, assay = "ATAC")
+Annotation(object = il1b) <- annotations
+counts3 = Read10X_h5("/directory/counts/CR74-75_1/filtered_feature_bc_matrix.h5") 
+fragpath3 = "/directory/counts/CR74-75_1/atac_fragments.tsv.gz"
+lane1 = CreateChromatinAssay(counts = counts3$Peaks, sep = c(":", "-"), genome = 'hg38', fragments = fragpath3)
+lane1 = CreateSeuratObject(counts = lane1, assay = "ATAC")
+Annotation(object = lane1) <- annotations
+counts4 = Read10X_h5("/directory/counts/CR74-75_2/filtered_feature_bc_matrix.h5")
+fragpath4 = "/directory/counts/CR74-75_2/atac_fragments.tsv.gz"
+lane2 = CreateChromatinAssay(counts = counts4$Peaks, sep = c(":", "-"), genome = 'hg38', fragments = fragpath4)
+lane2 = CreateSeuratObject(counts = lane2, assay = "ATAC")
+Annotation(object = lane2) <- annotations
+counts5 = Read10X_h5("/directory/counts/CR74-75_3/filtered_feature_bc_matrix.h5")
+fragpath5 = "/directory/counts/CR74-75_3/atac_fragments.tsv.gz"
+lane3 = CreateChromatinAssay(counts = counts5$Peaks, sep = c(":", "-"), genome = 'hg38', fragments = fragpath5)
+lane3 = CreateSeuratObject(counts = lane3, assay = "ATAC")
+Annotation(object = lane3) <- annotations
+counts6 = Read10X_h5("/directory/counts/CR74-75_4/filtered_feature_bc_matrix.h5")
+fragpath6 = "/directory/counts/CR74-75_4/atac_fragments.tsv.gz"
+lane4 = CreateChromatinAssay(counts = counts6$Peaks, sep = c(":", "-"), genome = 'hg38', fragments = fragpath6)
+lane4 = CreateSeuratObject(counts = lane4, assay = "ATAC")
+Annotation(object = lane4) <- annotations
+counts7 = Read10X_h5("/directory/counts/CR74-75_5/filtered_feature_bc_matrix.h5")
+fragpath7 = "/directory/counts/CR74-75_5/atac_fragments.tsv.gz"
+lane5 = CreateChromatinAssay(counts = counts7$Peaks, sep = c(":", "-"), genome = 'hg38', fragments = fragpath7)
+lane5 = CreateSeuratObject(counts = lane5, assay = "ATAC")
+Annotation(object = lane5) <- annotations
+
+# Filter out low quality cells 
+nt <- NucleosomeSignal(nt)
+nt <- TSSEnrichment(nt, fast = FALSE) 
+VlnPlot(object = nt,features = c("nCount_ATAC", "TSS.enrichment", "nucleosome_signal"), pt.size = 0)
+nt <- subset(x = nt, subset = nucleosome_signal < 2 & TSS.enrichment > 1 & nCount_ATAC > 500)
+il1b <- NucleosomeSignal(il1b)
+il1b <- TSSEnrichment(il1b, fast = FALSE) 
+VlnPlot(object = il1b, features = c("nCount_ATAC", "TSS.enrichment", "nucleosome_signal"), pt.size = 0)
+il1b <- subset(x = il1b, subset = nucleosome_signal < 2 & TSS.enrichment > 1 & nCount_ATAC > 500)
+lane1 <- NucleosomeSignal(lane1)
+lane1 <- TSSEnrichment(lane1, fast = FALSE) 
+VlnPlot(object = lane1,features = c("nCount_ATAC", "TSS.enrichment", "nucleosome_signal"), pt.size = 0)
+lane1 <- subset(x = lane1,subset = nucleosome_signal < 2 & TSS.enrichment > 1 & nCount_ATAC > 500)
+lane2 <- NucleosomeSignal(lane2)
+lane2 <- TSSEnrichment(lane2, fast = FALSE) 
+VlnPlot(object = lane2, features = c("nCount_ATAC", "TSS.enrichment", "nucleosome_signal"), pt.size = 0)
+lane2 <- subset(x = lane2, subset = nucleosome_signal < 2 & TSS.enrichment > 1 & nCount_ATAC > 500)
+lane3 <- NucleosomeSignal(lane3)
+lane3 <- TSSEnrichment(lane3, fast = FALSE) 
+VlnPlot(object = lane3,features = c("nCount_ATAC", "TSS.enrichment", "nucleosome_signal"), pt.size = 0)
+lane3 <- subset(x = lane3, subset = nucleosome_signal < 2 & TSS.enrichment > 1 & nCount_ATAC > 500)
+lane4 <- NucleosomeSignal(lane4)
+lane4 <- TSSEnrichment(lane4, fast = FALSE) 
+VlnPlot(object = lane4, features = c("nCount_ATAC", "TSS.enrichment", "nucleosome_signal"), pt.size = 0)
+lane4 <- subset(x = lane4, subset = nucleosome_signal < 2 & TSS.enrichment > 1 & nCount_ATAC > 500)
+lane5 <- NucleosomeSignal(lane5)
+lane5 <- TSSEnrichment(lane5, fast = FALSE) 
+VlnPlot(object = lane5, features = c("nCount_ATAC", "TSS.enrichment", "nucleosome_signal"), pt.size = 0)
+lane5 <- subset(x = lane5, subset = nucleosome_signal < 2 & TSS.enrichment > 1 & nCount_ATAC > 500)
+
+# Load demuxlet files
+nt = importDemux(nt,demuxlet.best = "/directory/snt/snt.demuxlet.concat.best")
+nt <- subset(nt, subset = demux.doublet.call == "SNG") 
+il1b = importDemux(il1b,demuxlet.best = "/directory/sil1b/sil1b.demuxlet.concat.best")
+il1b <- subset(il1b, subset = demux.doublet.call == "SNG") 
+lane1 = importDemux(lane1,demuxlet.best = "/directory/CR74-75_1/CR74-75_1.demuxlet.concat.best")
+lane1 <- subset(lane1, subset = demux.doublet.call == "SNG") 
+lane2 = importDemux(lane2,demuxlet.best = "/directory/CR74-75_2/CR74-75_2.demuxlet.concat.best")
+lane2 <- subset(lane2, subset = demux.doublet.call == "SNG") 
+lane3 = importDemux(lane3,demuxlet.best = "/directory/CR74-75_3/CR74-75_3.demuxlet.concat.best")
+lane3 <- subset(lane3, subset = demux.doublet.call == "SNG") 
+lane4 = importDemux(lane4,demuxlet.best = "/directory/CR74-75_4/CR74-75_4.demuxlet.concat.best")
+lane4 <- subset(lane4, subset = demux.doublet.call == "SNG") 
+lane5 = importDemux(lane5,demuxlet.best = "/directory/CR74-75_5/CR74-75_5.demuxlet.concat.best")
+lane5 <- subset(lane5, subset = demux.doublet.call == "SNG") 
+
+# Save lane information 
+nt$condition = "nt"
+il1b$condition = "il1b"
+lane1$condition = "lane1"
+lane2$condition = "lane2"
+lane3$condition = "lane3"
+lane4$condition = "lane4"
+lane5$condition = "lane5"
+
+# Make donor IDs meaningful 
+x = gsub("\\..*", "", nt$Sample)
+nt = AddMetaData(object = nt, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", il1b$Sample)
+il1b = AddMetaData(object = il1b, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", lane1$Sample)
+lane1 = AddMetaData(object = lane1, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", lane2$Sample)
+lane2 = AddMetaData(object = lane2, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", lane3$Sample)
+lane3 = AddMetaData(object = lane3, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", lane4$Sample)
+lane4 = AddMetaData(object = lane4, metadata = x, col.name = "Donor")
+x = gsub("\\..*", "", lane5$Sample)
+lane5 = AddMetaData(object = lane5, metadata = x, col.name = "Donor")
+
+# Add lane IDs to cell barcodes 
+x = gsub("^", paste0(nt$condition, "_"), colnames(nt))
+nt = RenameCells(nt, new.names = x)
+x = gsub("^", paste0(il1b$condition, "_"), colnames(il1b))
+il1b = RenameCells(il1b, new.names = x)
+x = gsub("^", paste0(lane1$condition, "_"), colnames(lane1))
+lane1 = RenameCells(lane1, new.names = x)
+x = gsub("^", paste0(lane2$condition, "_"), colnames(lane2))
+lane2 = RenameCells(lane2, new.names = x)
+x = gsub("^", paste0(lane3$condition, "_"), colnames(lane3))
+lane3 = RenameCells(lane3, new.names = x)
+x = gsub("^", paste0(lane4$condition, "_"), colnames(lane4))
+lane4  = RenameCells(lane4, new.names = x)
+x = gsub("^", paste0(lane5$condition, "_"), colnames(lane5))
+lane5 = RenameCells(lane5, new.names = x)
+
+# Utilize donor and lane information to assign treatments to each cell barcode in the metadata
+nt$Treatment = "ctrl_6hr"
+il1b$Treatment = "il1b_6hr"
+lane1_V105_J98_U114 = subset(lane1, subset = Donor == "V105" 
+                             | Donor == "J98" 
+                             | Donor == "U114")
+cells_lane1_V105_J98_U114 = colnames(lane1_V105_J98_U114)
+lane1$Treatment <- ifelse(colnames(lane1) %in% cells_lane1_V105_J98_U114, "siSCR_7d", "ctrl_tx_7d")
+lane1$Donor = ifelse(lane1$Donor == "TELOS", "WT_Telo", lane1$Donor)
+lane2_V105_J98_U114 = subset(lane2, subset = Donor == "V105" 
+                             | Donor == "J98" 
+                             | Donor == "U114")
+lane2_J76_WT_Telos = subset(lane2, subset = Donor == "J76" 
+                            | Donor == "TELOS")
+cells_lane2_V105_J98_U114 = colnames(lane2_V105_J98_U114)
+cells_lane2_J76_WT_Telos = colnames(lane2_J76_WT_Telos)
+lane2$Treatment <- ifelse(colnames(lane2) %in% cells_lane2_V105_J98_U114, "siRNA_7d", 
+                          ifelse(colnames(lane2) %in% cells_lane2_J76_WT_Telos, "TGFb_7d", "TGFb_4d"))
+lane2$Donor = ifelse(lane2$Donor == "TELOS", "WT_Telo", lane2$Donor)
+lane3_J98 = subset(lane3, subset = Donor == "J98")
+lane3_U114_V105 = subset(lane3, subset = Donor == "U114" 
+                         | Donor == "V105")
+lane3_M103 = subset(lane3, subset = Donor == "M103")
+lane3_J76_WT_Telos = subset(lane3, subset = Donor == "J76" 
+                            | Donor == "TELOS")
+cells_lane3_J98 = colnames(lane3_J98)
+cells_lane3_U114_V105 = colnames(lane3_U114_V105)
+cells_lane3_M103 = colnames(lane3_M103)
+cells_lane3_J76_WT_Telos = colnames(lane3_J76_WT_Telos)
+lane3$Treatment <- ifelse(colnames(lane3) %in% cells_lane3_J98, "siSCR_4d", 
+                          ifelse(colnames(lane3) %in% cells_lane3_U114_V105, "ctrl_tx_7d",
+                                 ifelse(colnames(lane3) %in% cells_lane3_M103, "TGFb_7d", "il1b_7d")))
+lane3$Donor = ifelse(lane3$Donor == "TELOS", "WT_Telo", lane3$Donor)
+lane4_J98 = subset(lane4, subset = Donor == "J98")
+lane4_D120_NH3 = subset(lane4, subset = Donor == "D120" 
+                        | Donor == "TELOS")
+lane4_U114_V105 = subset(lane4, subset = Donor == "U114" 
+                         | Donor == "V105")
+cells_lane4_J98 = colnames(lane4_J98)
+cells_lane4_D120_NH3 = colnames(lane4_D120_NH3)
+cells_lane4_U114_V105 = colnames(lane4_U114_V105)
+lane4$Treatment <- ifelse(colnames(lane4) %in% cells_lane4_J98, "siRNA_4d", 
+                          ifelse(colnames(lane4) %in% cells_lane4_D120_NH3, "ctrl_tx_7d",
+                                 ifelse(colnames(lane4) %in% cells_lane4_U114_V105, "TGFb_7d", "il1b_4d")))
+lane4$Donor = ifelse(lane4$Donor == "TELOS", "NH3", lane4$Donor)
+lane5_D120_NH3 = subset(lane5, subset = Donor == "D120" 
+                        | Donor == "TELOS")
+cells_lane5_D120_NH3 = colnames(lane5_D120_NH3)
+lane5$Treatment <- ifelse(colnames(lane5) %in% cells_lane5_D120_NH3, "TGFb_7d", "il1b_7d")
+lane5$Donor = ifelse(lane5$Donor == "TELOS", "NH3", lane5$Donor)
+combined.peaks <- UnifyPeaks(object.list = list(nt, il1b, lane1, lane2, lane3, lane4, lane5), mode = "reduce")
+
+# Quantify common peaks
+nt.counts <- FeatureMatrix(Fragments(nt), features = combined.peaks, sep = c(":", "-"), cells = colnames(nt))
+il1b.counts <- FeatureMatrix(Fragments(il1b), features = combined.peaks, sep = c(":", "-"), cells = colnames(il1b))
+lane1.counts <- FeatureMatrix(Fragments(lane1), features = combined.peaks, sep = c(":", "-"), cells = colnames(lane1))
+lane2.counts <- FeatureMatrix(Fragments(lane2), features = combined.peaks, sep = c(":", "-"), cells = colnames(lane2))
+lane3.counts <- FeatureMatrix(Fragments(lane3), features = combined.peaks, sep = c(":", "-"), cells = colnames(lane3))
+lane4.counts <- FeatureMatrix(Fragments(lane4), features = combined.peaks, sep = c(":", "-"), cells = colnames(lane4))
+lane5.counts <- FeatureMatrix(Fragments(lane5), features = combined.peaks, sep = c(":", "-"), cells = colnames(lane5))
+
+# Save metadata 
+metadata <- data.frame(c(nt$Treatment, il1b$Treatment, lane1$Treatment, lane2$Treatment, lane3$Treatment, lane4$Treatment, lane5$Treatment), 
+                       c(nt$Donor, il1b$Donor, lane1$Donor, lane2$Donor, lane3$Donor, lane4$Donor, lane5$Donor), 
+                       c(nt$condition, il1b$condition, lane1$condition, lane2$condition, lane3$condition, lane4$condition, lane5$condition))
+colnames(metadata) = c("Treatment", "Donor", "condition")
+write.csv(metadata, file = "/directory/metadataTest.csv")
+
+# Overwrite individual peaks files with the common peak set 
+nt_assay = CreateChromatinAssay(counts = nt.counts, sep = c(":", "-"), genome = "hg38", fragments = Fragments(nt))
+nt = CreateSeuratObject(counts = nt_assay, assay = "ATAC")
+Annotation(object = nt) = annotations
+il1b_assay = CreateChromatinAssay(counts = il1b.counts, sep = c(":", "-"), genome = "hg38", fragments = Fragments(il1b))
+il1b = CreateSeuratObject(counts = il1b_assay, assay = "ATAC")
+Annotation(object = il1b) = annotations
+lane1_assay = CreateChromatinAssay(counts = lane1.counts, sep = c(":", "-"), genome = "hg38", fragments = Fragments(lane1))
+lane1 = CreateSeuratObject(counts = lane1_assay, assay = "ATAC")
+Annotation(object = lane1) = annotations
+lane2_assay = CreateChromatinAssay(counts = lane2.counts, sep = c(":", "-"), genome = "hg38", fragments = Fragments(lane2))
+lane2 = CreateSeuratObject(counts = lane2_assay, assay = "ATAC")
+Annotation(object = lane2) = annotations
+lane3_assay = CreateChromatinAssay(counts = lane3.counts, sep = c(":", "-"), genome = "hg38", fragments = Fragments(lane3))
+lane3 = CreateSeuratObject(counts = lane3_assay, assay = "ATAC")
+Annotation(object = lane3) = annotations
+lane4_assay = CreateChromatinAssay(counts = lane4.counts, sep = c(":", "-"), genome = "hg38", fragments = Fragments(lane4))
+lane4 = CreateSeuratObject(counts = lane4_assay, assay = "ATAC")
+Annotation(object = lane4) = annotations
+lane5_assay = CreateChromatinAssay(counts = lane5.counts, sep = c(":", "-"), genome = "hg38", fragments = Fragments(lane5))
+lane5 = CreateSeuratObject(counts = lane5_assay, assay = "ATAC")
+Annotation(object = lane5) = annotations
+
+# Load and add metadata file back to each seurat object 
+metadata = read.csv(file = "/directory/metadataTest.csv", row.names = 1)
+nt.barcodes = intersect(colnames(nt), rownames(metadata))
+nt = AddMetaData(nt, metadata = subset(metadata, selection = rownames(nt) == nt.barcodes))
+head(nt@meta.data)
+il1b.barcodes = intersect(colnames(il1b), rownames(metadata))
+il1b = AddMetaData(il1b, metadata = subset(metadata, selection = rownames(il1b) == il1b.barcodes))
+head(il1b@meta.data)
+lane1.barcodes = intersect(colnames(lane1), rownames(metadata))
+lane1 = AddMetaData(lane1, metadata = subset(metadata, selection = rownames(lane1) == lane1.barcodes))
+head(lane1@meta.data)
+lane2.barcodes = intersect(colnames(lane2), rownames(metadata))
+lane2 = AddMetaData(lane2, metadata = subset(metadata, selection = rownames(lane2) == lane2.barcodes))
+head(lane2@meta.data)
+lane3.barcodes = intersect(colnames(lane3), rownames(metadata))
+lane3 = AddMetaData(lane3, metadata = subset(metadata, selection = rownames(lane3) == lane3.barcodes))
+head(lane3@meta.data)
+lane4.barcodes = intersect(colnames(lane4), rownames(metadata))
+lane4 = AddMetaData(lane4, metadata = subset(metadata, selection = rownames(lane4) == lane4.barcodes))
+head(lane4@meta.data)
+lane5.barcodes = intersect(colnames(lane5), rownames(metadata))
+lane5 = AddMetaData(lane5, metadata = subset(metadata, selection = rownames(lane5) == lane5.barcodes))
+head(lane5@meta.data)
+
+# Merge ATAC objects by lane 
+merged = merge(nt, y = c(il1b, lane1, lane2, lane3, lane4, lane5))
+
+# Call peaks on every treatment  
+peaks.merged <- CallPeaks(merged, macs2.path = "/opt/conda/bin/macs2", group.by = "Treatment", fragment.tempdir = "/directory/", outdir = "/directory/") 
+peaks.merged <- keepStandardChromosomes(peaks.merged, pruning.mode = "coarse") # remove peaks on nonstandard chromosomes and in genomic blacklist regions
+peaks.merged <- subsetByOverlaps(x = peaks.merged, ranges = blacklist_hg38_unified, invert = TRUE)
+combined.peaks = reduce(peaks.merged) # create a unified set of peaks to quantify in each dataset 
+macs2_counts.merged <- FeatureMatrix(fragments = Fragments(merged), features = combined.peaks, cells = colnames(merged)) # quantify counts in each peak
+merged_assay = CreateChromatinAssay(counts = macs2_counts.merged, sep = c(":", "-"), genome = "hg38", fragments = Fragments(merged))
+
+# Create a new seurat object with new peak set and add annotations and metadata back to the new object
+merged = CreateSeuratObject(counts = merged_assay, assay = "ATAC")
+Annotation(object = merged) = annotations 
+merged.barcodes = intersect(colnames(merged), rownames(metadata))
+merged = AddMetaData(merged, metadata = subset(metadata, selection = rownames(merged) == merged.barcodes))
+head(merged@meta.data)
+
+# Compute LSI based on new peak coordinates
+merged <- RunTFIDF(merged)
+merged<- FindTopFeatures(merged)
+merged <- RunSVD(merged)
+merged <- RunUMAP(merged, reduction = 'lsi', dims = 2:30)
+
+# Integrate by treatment 
+object.list <- SplitObject(merged, split.by = "Treatment") 
+integration.anchors <- FindIntegrationAnchors(object.list = object.list, anchor.features = UnifyPeaks(object.list, mode = "reduce"), reduction = "rlsi", dims = 2:30) 
+integrated_atac <- IntegrateEmbeddings(anchorset = integration.anchors, reductions = merged[["lsi"]], new.reduction.name = "integrated_lsi", dims.to.integrate = 1:30, k.weight = 50)
+Fragments(integrated_atac) 
+
+# Visualize new object 
+integrated_atac <- RunUMAP(integrated_atac, reduction = "integrated_lsi", dims = 2:30)
+integrated_atac <- FindNeighbors(integrated_atac, reduction = 'integrated_lsi', dims = 2:30)
+integrated_atac <- FindClusters(integrated_atac, algorithm = 3, resolution = 0.38, verbose = FALSE)
+DimPlot(integrated_atac, reduction = "umap")
+DimPlot(integrated_atac, reduction = "umap", group.by = "Treatment")
+DimPlot(integrated_atac, reduction = "umap", group.by = "Treatment", split.by = "Donor")
+
+# Match cell barcodes between RNA and ATAC objects 
+
+# Load integrated RNA object and run PCA
+integrated_rna = readRDS("/directory/integrated_rna_sct_with_multiome.RDS")
+integrated_rna <- RunPCA(integrated_rna, verbose = FALSE)
+integrated_rna <- RunUMAP(integrated_rna, reduction = "pca", dims = 1:30)
+integrated_rna <- FindNeighbors(integrated_rna, reduction = "pca", dims = 1:30)
+integrated_rna <- FindClusters(integrated_rna, resolution = 0.5)
+DimPlot(integrated_rna, reduction = "umap", label = T)
+
+# Filter out cell barcodes that do not match
+integrated_atac_filtered = subset(integrated_atac, cells = WhichCells(integrated_rna))
+integrated_rna_filtered = subset(integrated_rna, cells = WhichCells(integrated_atac_filtered))
+
+# Combine datasets
+integrated_rna_filtered[["ATAC"]] = integrated_atac_filtered[["ATAC"]]
+integrated_rna_filtered[["integrated_lsi"]] = integrated_atac_filtered[["integrated_lsi"]] 
+integrated_multi = integrated_rna_filtered
+
+# Perform WNN analysis 
+integrated_multi <- FindMultiModalNeighbors(
+  object = integrated_multi,
+  reduction.list = list("pca", "integrated_lsi"), 
+  dims.list = list(1:30, 2:30), 
+  verbose = TRUE
+)
+
+# Build joint UMAP for visualization and find clusters 
+integrated_multi <- RunUMAP(
+  object = integrated_multi,
+  nn.name = "weighted.nn",
+  reduction.name = "wnn.umap",
+  reduction.key = "wnnUMAP_"
+)
+integrated_multi <- FindClusters(integrated_multi, graph.name = "wsnn", algorithm = 3, resolution = 2, verbose = FALSE) 
+
+# Call peaks based on the new clusters 
+atac = integrated_multi 
+DefaultAssay(atac) = "ATAC"
+atac.slim = DietSeurat(
+  object = atac,
+  counts = TRUE,
+  data = TRUE,
+  scale.data = TRUE,
+  features = NULL,
+  assays = c("ATAC"),
+  dimreducs = c("wnn.umap"), 
+  graphs = NULL
+)
+peaks.atac <- CallPeaks(atac.slim, macs2.path = "/opt/conda/bin/macs2", group.by = "seurat_clusters", fragment.tempdir = "/directory/", outdir = "/directory/") 
+peaks.atac <- keepStandardChromosomes(peaks.atac, pruning.mode = "coarse") # remove peaks on nonstandard chromosomes and in genomic blacklist regions
+peaks.atac <- subsetByOverlaps(x = peaks.atac, ranges = blacklist_hg38_unified, invert = TRUE)
+combined.peaks = reduce(peaks.atac) # Create a unified set of peaks to quantify in each dataset 
+macs2_counts.atac <- FeatureMatrix(fragments = Fragments(atac.slim), features = combined.peaks, cells = colnames(atac.slim)) # quantify counts in each peak
+
+# Create a new seurat object with new peaks and add annotations and metadata back 
+atac.slim_assay = CreateChromatinAssay(counts = macs2_counts.atac, sep = c(":", "-"), genome = "hg38", fragments = Fragments(atac.slim))
+atac.slim = CreateSeuratObject(counts = atac.slim_assay, assay = "ATAC")
+Annotation(object = atac.slim) = annotations # Add annotations back 
+atac.slim.barcodes = intersect(colnames(atac.slim), rownames(metadata)) # Add metadata back 
+atac.slim = AddMetaData(atac.slim, metadata = subset(metadata, selection = rownames(atac.slim) == atac.slim.barcodes))
+head(atac.slim@meta.data)
+
+# Compute LSI and reintegrate ATAC data based on new LSI
+atac.slim <- RunTFIDF(atac.slim)
+atac.slim <- FindTopFeatures(atac.slim)
+atac.slim <- RunSVD(atac.slim)
+atac.slim <- RunUMAP(atac.slim, reduction = 'lsi', dims = 2:30)
+
+# Re-integrate ATAC dataset by treatment
+object.list <- SplitObject(atac.slim, split.by = "Treatment") 
+atac.anchors <- FindIntegrationAnchors(object.list = object.list, anchor.features = UnifyPeaks(object.list, mode = "reduce"), reduction = "rlsi", dims = 2:30) # Find integration anchors
+atac_new <- IntegrateEmbeddings(anchorset = atac.anchors, reductions = atac.slim[["lsi"]], new.reduction.name = "new_integrated_lsi", dims.to.integrate = 1:30, k.weight = 50) 
+
+# Overwrite ATAC multiome data with new peak set and new integrated lsi
+integrated_multi[["ATAC"]] = atac_new[["ATAC"]] 
+integrated_multi[["new_integrated_lsi"]] = atac_new[["new_integrated_lsi"]] 
+
+# Remove fragment files with no cells to speed up downstream analyses
+DefaultAssay(integrated_multi) = "ATAC"
+for (i in 1:length(Fragments(integrated_multi))){ 
+  if(length(integrated_multi@assays[["ATAC"]]@fragments[[i]]@cells)==0){integrated_multi@assays[["ATAC"]]@fragments[[i]]=NULL}
+}
+for (i in 1:length(Fragments(integrated_multi))){ 
+  if(length(integrated_multi@assays[["ATAC"]]@fragments[[i]]@cells)==0){integrated_multi@assays[["ATAC"]]@fragments[[i]]=NULL}
+}
+for (i in 1:length(Fragments(integrated_multi))){ 
+  if(length(integrated_multi@assays[["ATAC"]]@fragments[[i]]@cells)==0){integrated_multi@assays[["ATAC"]]@fragments[[i]]=NULL}
+} 
+for (i in 1:length(Fragments(integrated_multi))){ 
+  if(length(integrated_multi@assays[["ATAC"]]@fragments[[i]]@cells)==0){integrated_multi@assays[["ATAC"]]@fragments[[i]]=NULL}
+}  
+for (i in 1:length(Fragments(integrated_multi))){ 
+  if(length(integrated_multi@assays[["ATAC"]]@fragments[[i]]@cells)==0){integrated_multi@assays[["ATAC"]]@fragments[[i]]=NULL}
+} 
+for (i in 1:length(Fragments(integrated_multi))){ 
+  if(length(integrated_multi@assays[["ATAC"]]@fragments[[i]]@cells)==0){integrated_multi@assays[["ATAC"]]@fragments[[i]]=NULL}
+} 
+for (i in 1:length(Fragments(integrated_multi))){ 
+  if(length(integrated_multi@assays[["ATAC"]]@fragments[[i]]@cells)==0){integrated_multi@assays[["ATAC"]]@fragments[[i]]=NULL}
+} 
+
+# Perform final round of WNN analysis 
+integrated_multi <- FindMultiModalNeighbors(
+  object = integrated_multi,
+  reduction.list = list("pca", "new_integrated_lsi"), 
+  dims.list = list(1:30, 2:30), 
+  verbose = TRUE
+)
+
+# Build joint UMAP visualization
+integrated_multi <- RunUMAP(
+  object = integrated_multi,
+  nn.name = "weighted.nn",
+  reduction.name = "wnn.umap",
+  reduction.key = "wnnUMAP_"
+)
+integrated_multi <- FindClusters(integrated_multi, graph.name = "wsnn", algorithm = 3, resolution = 0.6, verbose = FALSE) 
+DimPlot(integrated_multi, reduction = 'wnn.umap', label = TRUE, repel = TRUE, label.size = 2.5)
+
+# Compute the GC content for each peak using RegionStats
+integrated_multi = RegionStats(integrated_multi, genome = BSgenome.Hsapiens.UCSC.hg38)
+
+# Link peaks to genes
+final_multi = LinkPeaks(object = integrated_multi, peak.assay = "ATAC", expression.assay = "integrated") 
+
+
+
+
